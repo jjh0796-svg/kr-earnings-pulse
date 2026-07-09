@@ -1,0 +1,25 @@
+name: Keepalive
+
+# 공개 저장소는 60일간 커밋이 없으면 예약 실행이 자동 중지되므로
+# 월 1회 하트비트 커밋을 남긴다.
+on:
+  schedule:
+    - cron: "0 1 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name "keepalive-bot"
+          git config user.email "actions@github.com"
+          date -u +%Y-%m-%d > .heartbeat
+          git add .heartbeat
+          git commit -m "Keepalive heartbeat" || echo "no change"
+          git push
