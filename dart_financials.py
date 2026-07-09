@@ -139,7 +139,9 @@ def render_quarterly_chart(
     ax.bar(
         op_x,
         [op_cho[i] for i in op_x],
-        color="#f2a154",
+        color="#ff8c00",
+        edgecolor="white",
+        linewidth=0.6,
         width=0.36,
         label="영업이익",
     )
@@ -158,12 +160,13 @@ def render_quarterly_chart(
             ax.annotate(
                 f"{op_cho[idx]:,.1f}",
                 xy=(idx, op_cho[idx]),
-                xytext=(0, 3),
+                xytext=(0, 4),
                 textcoords="offset points",
                 ha="center",
-                fontsize=8.5,
+                fontsize=9.5,
                 fontweight="bold",
-                color="#b5651d",
+                color="#c05a00",
+                bbox=dict(facecolor="white", alpha=0.85, edgecolor="none", pad=1.2),
             )
     suffix = " (최신=잠정치)" if provisional else ""
     ax.set_title(f"{name} 분기 매출·영업이익 (조원, 연결){suffix}", fontsize=13, fontweight="bold")
