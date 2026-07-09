@@ -167,11 +167,40 @@ def parse_earnings_numbers(text: str) -> dict | None:
         "revenue_pct": revenue[1],
         "op": _fmt_krw(op[0], unit_won),
         "op_pct": op[1],
+        "revenue_won": revenue[0] * unit_won,
+        "op_won": op[0] * unit_won,
     }
 
 
-def build_message(name: str, report_nm: str, rcept_no: str, numbers: dict | None) -> str:
+def infer_quarter(doc_text: str, rcept_dt: str) -> tuple[int, int]:
+    """공시 원문 또는 접수월로 대상 분기를 추정한다."""
+    match = re.search(r"(20\d{2})\s*년\s*(?:제?\s*)?([1-4])\s*분기", doc_text)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    year, month = int(rcept_dt[:4]), int(rcept_dt[4:6])
+    quarter_by_month = {1: 4, 2: 4, 3: 4, 4: 1, 5: 1, 6: 1, 7: 2, 8: 2, 9: 2, 10: 3, 11: 3, 12: 3}
+    quarter = quarter_by_month[month]
+    if quarter == 4 and month <= 3:
+        year -= 1
+    return year, quarter
+
+
+def build_message(
+    name: str,
+    report_nm: str,
+    rcept_no: str,
+    numbers: dict | None,
+    rcept_dt: str = "",
+    quarter: tuple[int, int] | None = None,
+) -> str:
     lines = [f"🚨 <b>[실적 공시] {name}</b>", report_nm.strip()]
+    meta = []
+    if quarter:
+        meta.append(f"대상: {quarter[0]}년 {quarter[1]}분기")
+    if rcept_dt:
+        meta.append(f"공시일 {rcept_dt[:4]}-{rcept_dt[4:6]}-{rcept_dt[6:8]}")
+    if meta:
+        lines.append(" · ".join(meta))
     if numbers:
         rev_pct = f" (전년동기 {numbers['revenue_pct']:+.1f}%)" if numbers.get("revenue_pct") is not None else ""
         op_pct = f" (전년동기 {numbers['op_pct']:+.1f}%)" if numbers.get("op_pct") is not None else ""
@@ -201,7 +230,19 @@ def send_telegram(message: str) -> None:
     ).raise_for_status()
 
 
-def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None = None) -> int:
+def send_telegram_photo(photo_path: Path, caption: str) -> None:
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    with photo_path.open("rb") as handle:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendPhoto",
+            data={"chat_id": chat_id, "caption": caption},
+            files={"photo": handle},
+            timeout=60,
+        ).raise_for_status()
+
+
+def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None = None, force: bool = False) -> int:
     state_path = state_path or default_state_path()
     state = load_state(state_path)
     sent = set(state["sent"])
@@ -216,20 +257,44 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
         rcept_no = filing.get("rcept_no", "")
         if corp_code not in watchlist or not REPORT_PATTERN.search(report_nm):
             continue
-        if rcept_no in sent:
+        if rcept_no in sent and not force:
             continue
         numbers = None
+        doc_text = ""
         try:
-            numbers = parse_earnings_numbers(_extract_document_text(api_key, rcept_no))
+            doc_text = _extract_document_text(api_key, rcept_no)
+            numbers = parse_earnings_numbers(doc_text)
         except Exception as exc:
             LOGGER.warning("공시 원문 파싱 실패(%s): %s", rcept_no, exc)
-        message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers)
+        rcept_dt = filing.get("rcept_dt", "")
+        quarter = infer_quarter(doc_text, rcept_dt) if rcept_dt else None
+        message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers, rcept_dt, quarter)
+        chart_path = None
+        if numbers and quarter:
+            try:
+                from dart_financials import fetch_quarterly_series, render_quarterly_chart
+
+                history = fetch_quarterly_series(api_key, corp_code, max_quarters=11)
+                history = [h for h in history if (h["year"], h["quarter"]) != quarter]
+                provisional = {"year": quarter[0], "quarter": quarter[1],
+                               "rev": numbers["revenue_won"], "op": numbers["op_won"]}
+                chart_path = render_quarterly_chart(
+                    watchlist[corp_code], history, Path(f".pulse/{corp_code}_chart.png"),
+                    provisional=provisional,
+                )
+            except Exception as exc:
+                LOGGER.warning("분기 차트 생성 실패(%s): %s", corp_code, exc)
         if dry_run:
             print("=" * 50)
             print(message)
+            if chart_path:
+                print(f"[차트 저장됨: {chart_path}]")
         else:
             send_telegram(message)
-            state["sent"].append(rcept_no)
+            if chart_path:
+                send_telegram_photo(chart_path, f"{watchlist[corp_code]} 최근 12분기 매출·영업이익률")
+            if rcept_no not in state["sent"]:
+                state["sent"].append(rcept_no)
             save_state(state_path, state)
             LOGGER.info("실적 공시 알림 발송: %s %s", watchlist[corp_code], rcept_no)
         hits += 1
@@ -242,9 +307,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="국내 주요 종목 실적 공시 즉시 알림.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--date", help="YYYYMMDD (테스트용)")
+    parser.add_argument("--force", action="store_true", help="이미 보낸 공시도 다시 발송")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    run_once(dry_run=args.dry_run, today=args.date)
+    run_once(dry_run=args.dry_run, today=args.date, force=args.force)
 
 
 if __name__ == "__main__":

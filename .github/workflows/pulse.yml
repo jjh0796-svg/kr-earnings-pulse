@@ -14,6 +14,11 @@ on:
         required: false
         type: boolean
         default: false
+      force_send:
+        description: "이미 보낸 공시도 다시 발송"
+        required: false
+        type: boolean
+        default: false
       date:
         description: "YYYYMMDD (테스트용 조회 날짜)"
         required: false
@@ -52,8 +57,14 @@ jobs:
       - name: Prepare state directory
         run: mkdir -p .pulse
 
+      - name: Install Korean fonts for charts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-nanum
+          rm -rf ~/.cache/matplotlib
+
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests matplotlib
 
       - name: Run earnings pulse
         env:
@@ -64,6 +75,7 @@ jobs:
         run: |
           ARGS=""
           if [[ "${{ inputs.dry_run }}" == "true" ]]; then ARGS="$ARGS --dry-run"; fi
+          if [[ "${{ inputs.force_send }}" == "true" ]]; then ARGS="$ARGS --force"; fi
           if [[ -n "${{ inputs.date }}" ]]; then ARGS="$ARGS --date ${{ inputs.date }}"; fi
           python earnings_pulse.py $ARGS
 
