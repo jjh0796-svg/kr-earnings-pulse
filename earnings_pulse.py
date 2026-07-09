@@ -206,7 +206,6 @@ def build_message(
         op_pct = f" (전년동기 {numbers['op_pct']:+.1f}%)" if numbers.get("op_pct") is not None else ""
         lines.append(f"매출액 {numbers['revenue']}{rev_pct}")
         lines.append(f"영업이익 {numbers['op']}{op_pct}")
-        lines.append("* 공시 원문 자동추출 값 — 원문 확인 권장")
     else:
         lines.append("숫자 자동추출 실패 — 원문에서 확인해 주세요")
     lines.append(VIEWER_URL.format(rcept_no=rcept_no))
