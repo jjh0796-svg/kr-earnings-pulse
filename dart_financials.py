@@ -123,15 +123,26 @@ def render_quarterly_chart(
 
     labels = [f"{r['year'] % 100}Q{r['quarter']}" for r in rows]
     rev_cho = [r["rev"] / 1e12 for r in rows]  # 원 → 조원
+    op_cho = [
+        (r["op"] / 1e12) if r.get("op") is not None else None for r in rows
+    ]
     opm = [
         (r["op"] / r["rev"] * 100) if r.get("op") is not None and r["rev"] else None
         for r in rows
     ]
 
-    fig, ax = plt.subplots(figsize=(11, 5))
+    fig, ax = plt.subplots(figsize=(11, 5.2))
     colors = ["#8a8a8a"] * len(rows)
     colors[-1] = "#d62728"
-    bars = ax.bar(range(len(rows)), rev_cho, color=colors, width=0.7)
+    ax.bar(range(len(rows)), rev_cho, color=colors, width=0.72, label="매출")
+    op_x = [i for i, v in enumerate(op_cho) if v is not None]
+    ax.bar(
+        op_x,
+        [op_cho[i] for i in op_x],
+        color="#f2a154",
+        width=0.36,
+        label="영업이익",
+    )
     for idx in range(max(0, len(rows) - 3), len(rows)):
         ax.annotate(
             f"{rev_cho[idx]:,.1f}",
@@ -143,12 +154,24 @@ def render_quarterly_chart(
             fontweight="bold",
             color="#d62728" if idx == len(rows) - 1 else "#333333",
         )
+        if op_cho[idx] is not None:
+            ax.annotate(
+                f"{op_cho[idx]:,.1f}",
+                xy=(idx, op_cho[idx]),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                fontsize=8.5,
+                fontweight="bold",
+                color="#b5651d",
+            )
     suffix = " (최신=잠정치)" if provisional else ""
-    ax.set_title(f"{name} 분기 매출 (조원, 연결){suffix}", fontsize=13, fontweight="bold")
+    ax.set_title(f"{name} 분기 매출·영업이익 (조원, 연결){suffix}", fontsize=13, fontweight="bold")
     ax.set_xticks(range(len(rows)))
     ax.set_xticklabels(labels, fontsize=9)
     ax.grid(axis="y", alpha=0.3)
     ax.set_axisbelow(True)
+    ax.legend(loc="upper left", fontsize=9, frameon=False)
 
     opm_points = [(i, v) for i, v in enumerate(opm) if v is not None]
     if len(opm_points) >= 4:
