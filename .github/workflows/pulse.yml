@@ -1,0 +1,75 @@
+name: Earnings Pulse
+
+run-name: Earnings Pulse (${{ inputs.trigger_source || github.event_name }})
+
+on:
+  schedule:
+    # 평일 07:00~17:59 KST, 15분 간격 (UTC 기준 두 구간)
+    - cron: "*/15 22-23 * * 0-4"
+    - cron: "*/15 0-8 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without sending Telegram messages"
+        required: false
+        type: boolean
+        default: false
+      date:
+        description: "YYYYMMDD (테스트용 조회 날짜)"
+        required: false
+        type: string
+        default: ""
+      trigger_source:
+        description: "Short label for the caller"
+        required: false
+        type: string
+        default: "manual"
+
+concurrency:
+  group: earnings-pulse
+  cancel-in-progress: false
+
+jobs:
+  pulse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: .pulse
+          key: pulse-state-${{ github.run_id }}
+          restore-keys: |
+            pulse-state-
+
+      - name: Prepare state directory
+        run: mkdir -p .pulse
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run earnings pulse
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PULSE_STATE_FILE: .pulse/state.json
+        run: |
+          ARGS=""
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then ARGS="$ARGS --dry-run"; fi
+          if [[ -n "${{ inputs.date }}" ]]; then ARGS="$ARGS --date ${{ inputs.date }}"; fi
+          python earnings_pulse.py $ARGS
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .pulse
+          key: pulse-state-${{ github.run_id }}

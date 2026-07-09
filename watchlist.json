@@ -1,0 +1,94 @@
+{
+ "companies": [
+  {
+   "stock_code": "005930",
+   "corp_code": "00126380",
+   "name": "삼성전자"
+  },
+  {
+   "stock_code": "000660",
+   "corp_code": "00164779",
+   "name": "SK하이닉스"
+  },
+  {
+   "stock_code": "066570",
+   "corp_code": "00401731",
+   "name": "LG전자"
+  },
+  {
+   "stock_code": "034220",
+   "corp_code": "00105873",
+   "name": "LG디스플레이"
+  },
+  {
+   "stock_code": "009150",
+   "corp_code": "00126371",
+   "name": "삼성전기"
+  },
+  {
+   "stock_code": "012450",
+   "corp_code": "00126566",
+   "name": "한화에어로스페이스"
+  },
+  {
+   "stock_code": "042660",
+   "corp_code": "00111704",
+   "name": "한화오션"
+  },
+  {
+   "stock_code": "064350",
+   "corp_code": "00302926",
+   "name": "현대로템"
+  },
+  {
+   "stock_code": "047810",
+   "corp_code": "00309503",
+   "name": "한국항공우주"
+  },
+  {
+   "stock_code": "079550",
+   "corp_code": "00503668",
+   "name": "LIG디펜스앤에어로스페이스"
+  },
+  {
+   "stock_code": "005380",
+   "corp_code": "00164742",
+   "name": "현대자동차"
+  },
+  {
+   "stock_code": "000270",
+   "corp_code": "00106641",
+   "name": "기아"
+  },
+  {
+   "stock_code": "278470",
+   "corp_code": "01190568",
+   "name": "에이피알"
+  },
+  {
+   "stock_code": "257720",
+   "corp_code": "00982023",
+   "name": "실리콘투"
+  },
+  {
+   "stock_code": "005490",
+   "corp_code": "00155319",
+   "name": "POSCO홀딩스"
+  },
+  {
+   "stock_code": "247540",
+   "corp_code": "01160363",
+   "name": "에코프로비엠"
+  },
+  {
+   "stock_code": "035420",
+   "corp_code": "00266961",
+   "name": "NAVER"
+  },
+  {
+   "stock_code": "068270",
+   "corp_code": "00413046",
+   "name": "셀트리온"
+  }
+ ]
+}
