@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -307,9 +308,24 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--date", help="YYYYMMDD (테스트용)")
     parser.add_argument("--force", action="store_true", help="이미 보낸 공시도 다시 발송")
+    parser.add_argument("--loop-minutes", type=float, default=0,
+                        help="0보다 크면 이 시간 동안 poll-seconds 간격으로 반복 조회")
+    parser.add_argument("--poll-seconds", type=float, default=75)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    run_once(dry_run=args.dry_run, today=args.date, force=args.force)
+    if args.loop_minutes <= 0:
+        run_once(dry_run=args.dry_run, today=args.date, force=args.force)
+        return
+    deadline = time.monotonic() + args.loop_minutes * 60
+    while True:
+        try:
+            run_once(dry_run=args.dry_run, today=args.date, force=args.force)
+        except Exception:
+            # 일시적 네트워크/DART 오류로 루프 전체가 죽지 않게 한다
+            LOGGER.exception("조회 실패 — 다음 주기에 재시도")
+        if time.monotonic() + args.poll_seconds > deadline:
+            break
+        time.sleep(args.poll_seconds)
 
 
 if __name__ == "__main__":
