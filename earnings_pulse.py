@@ -209,19 +209,24 @@ def parse_earnings_numbers(text: str) -> dict | None:
     }
 
 
+# 현대차: '국내 49,022 34,333 42.8 - 66,001 -25.7' / 기아: '판매대수(내수) 45,705 40,213 +13.7 - 49,001 -6.7'
 _UNIT_ROW = re.compile(
-    r"(국내|해외|계|합계)\s+([\d,]+)\s+([\d,]+)\s+(-?[\d.]+)\s+\S+\s+([\d,]+)\s+(-?[\d.]+)")
+    r"(국내|해외|계|합계|판매대수\((?:내수|해외|특수)\))\s+([\d,]+)\s+([\d,]+)\s+([+-]?[\d.]+)(?:\s+\S+)?\s+([\d,]+)\s+([+-]?[\d.]+)")
+_UNIT_LABEL = {"판매대수(내수)": "국내", "판매대수(해외)": "해외", "판매대수(특수)": "특수", "합계": "계"}
+# 현대차 '당기실적 (2026년9월)' / 기아 "당기실적 ('26.9월)"
+_PERIOD = re.compile(r"당기실적\s*\(\s*'?(\d{2,4})\s*[년.]\s*(\d{1,2})\s*월\s*\)")
+_CUM_TOTAL = re.compile(r"당기누적.*?계\s+([\d,]+)(?:\s+[^\d\s]\S*)*\s+([\d,]+)\s+([+-]?\d[\d.]*)")
 
 
 def parse_monthly_units(text: str) -> dict | None:
     """현대차·기아의 월간 판매실적(공정공시) — 재무 표는 전부 '-' 이고 '구분(단위:대,%)' 표에 대수만 있다.
-    (10/1 현대차 공시가 '숫자 자동추출 실패'로 나간 원인)"""
+    (10/1 현대차·기아 공시가 '숫자 자동추출 실패'로 나간 원인)"""
     if "단위:대" not in text.replace(" ", ""):
         return None
-    period = re.search(r"당기실적\s*\((20\d{2})년\s*(\d{1,2})월\)", text)
+    period = _PERIOD.search(text)
     rows: dict[str, dict] = {}
     for m in _UNIT_ROW.finditer(text):
-        key = "계" if m.group(1) in ("계", "합계") else m.group(1)
+        key = _UNIT_LABEL.get(m.group(1), m.group(1))
         if key in rows:
             continue
         try:
@@ -231,17 +236,24 @@ def parse_monthly_units(text: str) -> dict | None:
             continue
     if "계" not in rows:
         return None
-    cum = re.search(r"당기누적\s*\((20\d{2})년\s*(\d{1,2})~(\d{1,2})월\).*?계\s+([\d,]+)\s+\S+\s+([\d,]+)\s+(-?[\d.]+)", text)
-    return {"year": period.group(1) if period else "", "month": period.group(2) if period else "",
-            "rows": rows,
-            "cum": {"months": f"{cum.group(2)}~{cum.group(3)}월", "cur": int(cum.group(4).replace(",", "")),
-                    "yoy": float(cum.group(6))} if cum else None}
+    year = period.group(1) if period else ""
+    year = f"20{year}" if len(year) == 2 else year
+    month = period.group(2) if period else ""
+    cum = _CUM_TOTAL.search(text)
+    cum_info = None
+    if cum:
+        try:
+            cum_info = {"months": f"1~{month}월" if month else "누적", "cur": int(cum.group(1).replace(",", "")),
+                        "yoy": float(cum.group(3))}
+        except ValueError:
+            cum_info = None
+    return {"year": year, "month": month, "rows": rows, "cum": cum_info}
 
 
 def build_units_message(name: str, rcept_no: str, units: dict) -> str:
     when = f"{units['year']}년 {units['month']}월" if units.get("month") else "월간"
     lines = [f"🚗 <b>[월간 판매실적] {name}</b> · {when}"]
-    for key, label in (("계", "합계"), ("국내", "국내"), ("해외", "해외")):
+    for key, label in (("계", "합계"), ("국내", "국내"), ("해외", "해외"), ("특수", "특수")):
         row = units["rows"].get(key)
         if row:
             lines.append(f"{label} {row['cur']:,}대 (전월 {row['mom']:+.1f}% · 전년동월 {row['yoy']:+.1f}%)")
