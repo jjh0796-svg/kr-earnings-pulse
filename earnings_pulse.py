@@ -39,6 +39,42 @@ def load_watchlist() -> dict[str, str]:
     return {c["corp_code"]: c["name"] for c in data["companies"]}
 
 
+def load_channels() -> dict[str, str]:
+    """corp_code → 채널 이름(semi/defense/consumer/market). 미지정은 semi(반도체모니터링)."""
+    data = json.loads((ROOT / "watchlist.json").read_text(encoding="utf-8"))
+    return {c["corp_code"]: (c.get("channel") or "semi") for c in data["companies"]}
+
+
+def _channel_creds(channel: str) -> tuple[str, str]:
+    """채널별 봇 토큰·chat_id. semi는 기본 env, 나머지는 PULSE_CHANNEL_FILES 로 지정한 env 파일에서 읽는다.
+    형식: 'defense=/path/x.env:TOKEN_VAR:CHAT_VAR;market=/path/.env:TELEGRAM_BOT_TOKEN:TELEGRAM_CHAT_ID'
+    (CHAT_VAR 가 그 파일에 없으면 기본 TELEGRAM_CHAT_ID 로 폴백 — 봇만 다르고 방은 같은 구성)
+    10/1 현대차 월간 판매실적이 반도체 채널로 가던 것을 채널별로 나눔."""
+    default = ((os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(), (os.environ.get("TELEGRAM_CHAT_ID") or "").strip())
+    if channel in ("", "semi"):
+        return default
+    for spec in (os.environ.get("PULSE_CHANNEL_FILES") or "").split(";"):
+        if not spec.strip() or not spec.startswith(channel + "="):
+            continue
+        path, _, rest = spec.split("=", 1)[1].partition(":")
+        token_var, _, chat_var = rest.partition(":")
+        values: dict[str, str] = {}
+        try:
+            for line in Path(path).read_text(encoding="utf-8").splitlines():
+                if "=" in line and not line.lstrip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    values[k.strip().removeprefix("export ")] = v.strip().strip("\"'")
+        except OSError as exc:
+            LOGGER.warning("채널 env 파일 읽기 실패(%s): %s — 기본 채널로 발송", channel, exc)
+            return default
+        token = values.get(token_var, "")
+        chat = values.get(chat_var, "") or default[1]
+        if token and chat:
+            return token, chat
+        LOGGER.warning("채널 %s 자격 부족 — 기본 채널로 발송", channel)
+    return default
+
+
 def default_state_path() -> Path:
     return Path(os.environ.get("PULSE_STATE_FILE", ".pulse/state.json"))
 
@@ -173,6 +209,49 @@ def parse_earnings_numbers(text: str) -> dict | None:
     }
 
 
+_UNIT_ROW = re.compile(
+    r"(국내|해외|계|합계)\s+([\d,]+)\s+([\d,]+)\s+(-?[\d.]+)\s+\S+\s+([\d,]+)\s+(-?[\d.]+)")
+
+
+def parse_monthly_units(text: str) -> dict | None:
+    """현대차·기아의 월간 판매실적(공정공시) — 재무 표는 전부 '-' 이고 '구분(단위:대,%)' 표에 대수만 있다.
+    (10/1 현대차 공시가 '숫자 자동추출 실패'로 나간 원인)"""
+    if "단위:대" not in text.replace(" ", ""):
+        return None
+    period = re.search(r"당기실적\s*\((20\d{2})년\s*(\d{1,2})월\)", text)
+    rows: dict[str, dict] = {}
+    for m in _UNIT_ROW.finditer(text):
+        key = "계" if m.group(1) in ("계", "합계") else m.group(1)
+        if key in rows:
+            continue
+        try:
+            rows[key] = {"cur": int(m.group(2).replace(",", "")), "mom": float(m.group(4)),
+                         "prev_year": int(m.group(5).replace(",", "")), "yoy": float(m.group(6))}
+        except ValueError:
+            continue
+    if "계" not in rows:
+        return None
+    cum = re.search(r"당기누적\s*\((20\d{2})년\s*(\d{1,2})~(\d{1,2})월\).*?계\s+([\d,]+)\s+\S+\s+([\d,]+)\s+(-?[\d.]+)", text)
+    return {"year": period.group(1) if period else "", "month": period.group(2) if period else "",
+            "rows": rows,
+            "cum": {"months": f"{cum.group(2)}~{cum.group(3)}월", "cur": int(cum.group(4).replace(",", "")),
+                    "yoy": float(cum.group(6))} if cum else None}
+
+
+def build_units_message(name: str, rcept_no: str, units: dict) -> str:
+    when = f"{units['year']}년 {units['month']}월" if units.get("month") else "월간"
+    lines = [f"🚗 <b>[월간 판매실적] {name}</b> · {when}"]
+    for key, label in (("계", "합계"), ("국내", "국내"), ("해외", "해외")):
+        row = units["rows"].get(key)
+        if row:
+            lines.append(f"{label} {row['cur']:,}대 (전월 {row['mom']:+.1f}% · 전년동월 {row['yoy']:+.1f}%)")
+    if units.get("cum"):
+        c = units["cum"]
+        lines.append(f"누적({c['months']}) {c['cur']:,}대 (전년 {c['yoy']:+.1f}%)")
+    lines.append(VIEWER_URL.format(rcept_no=rcept_no))
+    return "\n".join(lines)
+
+
 def infer_quarter(doc_text: str, rcept_dt: str) -> tuple[int, int]:
     """공시 원문 또는 접수월로 대상 분기를 추정한다."""
     match = re.search(r"(20\d{2})\s*년\s*(?:제?\s*)?([1-4])\s*분기", doc_text)
@@ -213,9 +292,8 @@ def build_message(
     return "\n".join(lines)
 
 
-def send_telegram(message: str) -> None:
-    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
-    chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+def send_telegram(message: str, channel: str = "semi") -> None:
+    token, chat_id = _channel_creds(channel)
     if not token or not chat_id:
         raise SystemExit("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 설정되지 않았습니다.")
     requests.post(
@@ -230,9 +308,8 @@ def send_telegram(message: str) -> None:
     ).raise_for_status()
 
 
-def send_telegram_photo(photo_path: Path, caption: str) -> None:
-    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
-    chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+def send_telegram_photo(photo_path: Path, caption: str, channel: str = "semi") -> None:
+    token, chat_id = _channel_creds(channel)
     with photo_path.open("rb") as handle:
         requests.post(
             f"https://api.telegram.org/bot{token}/sendPhoto",
@@ -249,6 +326,7 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
     api_key = _api_key()
     today = today or datetime.now(KST).strftime("%Y%m%d")
     watchlist = load_watchlist()
+    channels = load_channels()
 
     hits = 0
     for filing in fetch_today_filings(api_key, today, watchlist):
@@ -260,15 +338,22 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
         if rcept_no in sent and not force:
             continue
         numbers = None
+        units = None
         doc_text = ""
         try:
             doc_text = _extract_document_text(api_key, rcept_no)
             numbers = parse_earnings_numbers(doc_text)
+            if numbers is None:
+                units = parse_monthly_units(doc_text)
         except Exception as exc:
             LOGGER.warning("공시 원문 파싱 실패(%s): %s", rcept_no, exc)
         rcept_dt = filing.get("rcept_dt", "")
-        quarter = infer_quarter(doc_text, rcept_dt) if rcept_dt else None
-        message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers, rcept_dt, quarter)
+        quarter = infer_quarter(doc_text, rcept_dt) if rcept_dt and not units else None
+        channel = channels.get(corp_code, "semi")
+        if units:
+            message = build_units_message(watchlist[corp_code], rcept_no, units)
+        else:
+            message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers, rcept_dt, quarter)
         chart_path = None
         if numbers and quarter:
             try:
@@ -290,9 +375,9 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
             if chart_path:
                 print(f"[차트 저장됨: {chart_path}]")
         else:
-            send_telegram(message)
+            send_telegram(message, channel)
             if chart_path:
-                send_telegram_photo(chart_path, f"{watchlist[corp_code]} 최근 12분기 매출·영업이익률")
+                send_telegram_photo(chart_path, f"{watchlist[corp_code]} 최근 12분기 매출·영업이익률", channel)
             if rcept_no not in state["sent"]:
                 state["sent"].append(rcept_no)
             save_state(state_path, state)

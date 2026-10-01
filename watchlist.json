@@ -3,92 +3,111 @@
   {
    "stock_code": "005930",
    "corp_code": "00126380",
-   "name": "삼성전자"
+   "name": "삼성전자",
+   "channel": "semi"
   },
   {
    "stock_code": "000660",
    "corp_code": "00164779",
-   "name": "SK하이닉스"
+   "name": "SK하이닉스",
+   "channel": "semi"
   },
   {
    "stock_code": "066570",
    "corp_code": "00401731",
-   "name": "LG전자"
+   "name": "LG전자",
+   "channel": "semi"
   },
   {
    "stock_code": "034220",
    "corp_code": "00105873",
-   "name": "LG디스플레이"
+   "name": "LG디스플레이",
+   "channel": "semi"
   },
   {
    "stock_code": "009150",
    "corp_code": "00126371",
-   "name": "삼성전기"
+   "name": "삼성전기",
+   "channel": "semi"
   },
   {
    "stock_code": "012450",
    "corp_code": "00126566",
-   "name": "한화에어로스페이스"
+   "name": "한화에어로스페이스",
+   "channel": "defense"
   },
   {
    "stock_code": "042660",
    "corp_code": "00111704",
-   "name": "한화오션"
+   "name": "한화오션",
+   "channel": "defense"
   },
   {
    "stock_code": "064350",
    "corp_code": "00302926",
-   "name": "현대로템"
+   "name": "현대로템",
+   "channel": "defense"
   },
   {
    "stock_code": "047810",
    "corp_code": "00309503",
-   "name": "한국항공우주"
+   "name": "한국항공우주",
+   "channel": "defense"
   },
   {
    "stock_code": "079550",
    "corp_code": "00503668",
-   "name": "LIG디펜스앤에어로스페이스"
+   "name": "LIG디펜스앤에어로스페이스",
+   "channel": "defense"
   },
   {
    "stock_code": "005380",
    "corp_code": "00164742",
-   "name": "현대자동차"
+   "name": "현대자동차",
+   "channel": "market"
   },
   {
    "stock_code": "000270",
    "corp_code": "00106641",
-   "name": "기아"
+   "name": "기아",
+   "channel": "market"
   },
   {
    "stock_code": "278470",
    "corp_code": "01190568",
-   "name": "에이피알"
+   "name": "에이피알",
+   "channel": "consumer"
   },
   {
    "stock_code": "257720",
    "corp_code": "00982023",
-   "name": "실리콘투"
+   "name": "실리콘투",
+   "channel": "consumer"
   },
   {
    "stock_code": "005490",
    "corp_code": "00155319",
-   "name": "POSCO홀딩스"
+   "name": "POSCO홀딩스",
+   "channel": "market"
   },
   {
    "stock_code": "247540",
    "corp_code": "01160363",
-   "name": "에코프로비엠"
+   "name": "에코프로비엠",
+   "channel": "market"
   },
   {
    "stock_code": "035420",
    "corp_code": "00266961",
-   "name": "NAVER"
+   "name": "NAVER",
+   "channel": "market"
   },
   {
    "stock_code": "068270",
    "corp_code": "00413046",
-   "name": "셀트리온"
+   "name": "셀트리온",
+   "channel": "market"
   }
- ]
+ ],
+ "_channels": "semi=반도체모니터링(기본) · defense=방산모니터링 · consumer=소비재 · market=증시데이터 (서버 PULSE_CHANNEL_FILES 로 토큰 파일 지정)"
 }
