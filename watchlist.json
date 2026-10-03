@@ -40,7 +40,7 @@
    "stock_code": "042660",
    "corp_code": "00111704",
    "name": "한화오션",
-   "channel": "defense"
+   "channel": "ship"
   },
   {
    "stock_code": "064350",
@@ -64,13 +64,13 @@
    "stock_code": "005380",
    "corp_code": "00164742",
    "name": "현대자동차",
-   "channel": "market"
+   "channel": "auto"
   },
   {
    "stock_code": "000270",
    "corp_code": "00106641",
    "name": "기아",
-   "channel": "market"
+   "channel": "auto"
   },
   {
    "stock_code": "278470",
@@ -94,7 +94,7 @@
    "stock_code": "247540",
    "corp_code": "01160363",
    "name": "에코프로비엠",
-   "channel": "market"
+   "channel": "battery"
   },
   {
    "stock_code": "035420",
