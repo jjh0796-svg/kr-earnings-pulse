@@ -32,6 +32,7 @@ DOC_URL = "https://opendart.fss.or.kr/api/document.xml"
 VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
 REPORT_PATTERN = re.compile(r"영업\s*\(?잠정\)?\s*실적|매출액\s*또는\s*손익구조")
+DOC_WAIT_MINUTES = 20  # 접수 직후 원문(document.xml)이 안 열리면 이만큼은 기다렸다가 숫자 없이 보낸다
 
 
 def load_watchlist() -> dict[str, str]:
@@ -284,6 +285,7 @@ def build_message(
     numbers: dict | None,
     rcept_dt: str = "",
     quarter: tuple[int, int] | None = None,
+    note: str = "",
 ) -> str:
     lines = [f"🚨 <b>[실적 공시] {name}</b>", report_nm.strip()]
     meta = []
@@ -299,7 +301,7 @@ def build_message(
         lines.append(f"매출액 {numbers['revenue']}{rev_pct}")
         lines.append(f"영업이익 {numbers['op']}{op_pct}")
     else:
-        lines.append("숫자 자동추출 실패 — 원문에서 확인해 주세요")
+        lines.append(note or "숫자 자동추출 실패 — 원문에서 확인해 주세요")
     lines.append(VIEWER_URL.format(rcept_no=rcept_no))
     return "\n".join(lines)
 
@@ -340,6 +342,11 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
     watchlist = load_watchlist()
     channels = load_channels()
 
+    # 원문 대기 중인 공시: {rcept_no: 처음 본 시각}. 어제 것은 지운다.
+    pending = state.setdefault("pending", {})
+    for rn in [k for k in pending if not k.startswith(today)]:
+        pending.pop(rn, None)
+
     hits = 0
     for filing in fetch_today_filings(api_key, today, watchlist):
         corp_code = filing.get("corp_code", "")
@@ -352,20 +359,35 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
         numbers = None
         units = None
         doc_text = ""
+        note = ""
         try:
             doc_text = _extract_document_text(api_key, rcept_no)
-            numbers = parse_earnings_numbers(doc_text)
-            if numbers is None:
-                units = parse_monthly_units(doc_text)
         except Exception as exc:
-            LOGGER.warning("공시 원문 파싱 실패(%s): %s", rcept_no, exc)
+            # 접수 직후엔 DART가 원문 zip 대신 '파일 미존재' 응답을 줘서 BadZipFile이 난다
+            # (10/8 삼성전자 잠정실적이 '숫자 자동추출 실패'로 나간 원인). 잠시 기다렸다가 다시 읽는다.
+            first = pending.setdefault(rcept_no, datetime.now(KST).isoformat())
+            waited = datetime.now(KST) - datetime.fromisoformat(first)
+            if waited < timedelta(minutes=DOC_WAIT_MINUTES) and not force:
+                LOGGER.info("원문 미공개(%s: %s) — %d분 경과, 재시도 대기", rcept_no, type(exc).__name__, waited.seconds // 60)
+                save_state(state_path, state)
+                continue
+            LOGGER.warning("원문 %d분 이상 미공개(%s) — 숫자 없이 발송", DOC_WAIT_MINUTES, rcept_no)
+            note = "원문이 아직 공개되지 않아 숫자를 못 읽었습니다 — 원문에서 확인해 주세요"
+        if doc_text:
+            try:
+                numbers = parse_earnings_numbers(doc_text)
+                if numbers is None:
+                    units = parse_monthly_units(doc_text)
+            except Exception as exc:
+                LOGGER.warning("공시 원문 파싱 실패(%s): %s", rcept_no, exc)
         rcept_dt = filing.get("rcept_dt", "")
         quarter = infer_quarter(doc_text, rcept_dt) if rcept_dt and not units else None
         channel = channels.get(corp_code, "semi")
         if units:
             message = build_units_message(watchlist[corp_code], rcept_no, units)
         else:
-            message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers, rcept_dt, quarter)
+            message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers, rcept_dt, quarter, note=note)
+        pending.pop(rcept_no, None)
         chart_path = None
         if numbers and quarter:
             try:
