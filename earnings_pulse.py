@@ -23,6 +23,8 @@ from pathlib import Path
 
 import requests
 
+import kr_track
+
 LOGGER = logging.getLogger("earnings_pulse")
 
 KST = timezone(timedelta(hours=9))
@@ -38,6 +40,11 @@ DOC_WAIT_MINUTES = 20  # 접수 직후 원문(document.xml)이 안 열리면 이
 def load_watchlist() -> dict[str, str]:
     data = json.loads((ROOT / "watchlist.json").read_text(encoding="utf-8"))
     return {c["corp_code"]: c["name"] for c in data["companies"]}
+
+
+def load_stock_codes() -> dict[str, str]:
+    data = json.loads((ROOT / "watchlist.json").read_text(encoding="utf-8"))
+    return {c["corp_code"]: c.get("stock_code", "") for c in data["companies"]}
 
 
 def load_channels() -> dict[str, str]:
@@ -104,10 +111,31 @@ def _api_key() -> str:
     return key
 
 
-def fetch_today_filings(api_key: str, today: str, watchlist: dict[str, str]) -> list[dict]:
-    """워치리스트 종목별로 당일 공시를 직접 조회한다.
-    (일자 전체 조회는 하루 수천 건이라 페이지 제한에 걸릴 수 있음)"""
+def fetch_today_filings(api_key: str, today: str, watchlist: dict[str, str], seen: set | None = None) -> list[dict]:
+    """당일 거래소 공시(pblntf_ty=I — 잠정실적·손익구조변동이 여기 속한다)를 최신순으로 읽어 워치리스트만 남긴다.
+
+    10/16: 예전엔 18개 회사를 매분 따로 조회해 하루 1.3만 콜(DART 한도 2만의 65%)을 썼다. 거래소 공시 한 쪽(100건)이면
+    1분 안에 새로 올라오는 건은 다 들어오고, 이미 본 접수번호가 나올 때까지만 다음 쪽을 넘긴다(최대 5쪽) — 하루 ~1.5천 콜.
+    조회가 실패하면 종목별 조회(옛 방식)로 돌아간다."""
     filings: list[dict] = []
+    seen = seen or set()
+    try:
+        for page in range(1, 6):
+            resp = requests.get(LIST_URL, params={"crtfc_key": api_key, "bgn_de": today, "end_de": today,
+                                                  "pblntf_ty": "I", "page_count": "100", "page_no": str(page)}, timeout=15)
+            data = resp.json()
+            if data.get("status") == "013":          # 조회 결과 없음
+                return filings
+            if data.get("status") != "000":
+                raise RuntimeError(f"DART {data.get('status')} {data.get('message')}")
+            rows = data.get("list", [])
+            filings.extend(r for r in rows if r.get("corp_code") in watchlist)
+            if not rows or any(r.get("rcept_no") in seen for r in rows) or page >= int(data.get("total_page") or 1):
+                return filings
+        return filings
+    except Exception as exc:
+        LOGGER.warning("거래소 공시 목록 조회 실패(%s) — 종목별 조회로 대체", exc)
+    filings = []
     for corp_code in watchlist:
         try:
             resp = requests.get(
@@ -286,6 +314,7 @@ def build_message(
     rcept_dt: str = "",
     quarter: tuple[int, int] | None = None,
     note: str = "",
+    extra: list[str] | None = None,
 ) -> str:
     lines = [f"🚨 <b>[실적 공시] {name}</b>", report_nm.strip()]
     meta = []
@@ -302,6 +331,8 @@ def build_message(
         lines.append(f"영업이익 {numbers['op']}{op_pct}")
     else:
         lines.append(note or "숫자 자동추출 실패 — 원문에서 확인해 주세요")
+    if extra:
+        lines.extend(extra)
     lines.append(VIEWER_URL.format(rcept_no=rcept_no))
     return "\n".join(lines)
 
@@ -341,6 +372,7 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
     today = today or datetime.now(KST).strftime("%Y%m%d")
     watchlist = load_watchlist()
     channels = load_channels()
+    stock_codes = load_stock_codes()
 
     # 원문 대기 중인 공시: {rcept_no: 처음 본 시각}. 어제 것은 지운다.
     pending = state.setdefault("pending", {})
@@ -348,7 +380,9 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
         pending.pop(rn, None)
 
     hits = 0
-    for filing in fetch_today_filings(api_key, today, watchlist):
+    for filing in fetch_today_filings(api_key, today, watchlist, seen=set(state.get("seen_today", {}).get(today, []))):
+        state.setdefault("seen_today", {})
+        state["seen_today"] = {today: sorted(set(state["seen_today"].get(today, [])) | {filing.get("rcept_no", "")})}
         corp_code = filing.get("corp_code", "")
         report_nm = filing.get("report_nm", "")
         rcept_no = filing.get("rcept_no", "")
@@ -383,10 +417,20 @@ def run_once(*, dry_run: bool, state_path: Path | None = None, today: str | None
         rcept_dt = filing.get("rcept_dt", "")
         quarter = infer_quarter(doc_text, rcept_dt) if rcept_dt and not units else None
         channel = channels.get(corp_code, "semi")
+        track = None
+        if numbers and quarter and not units:
+            # 국내판 '약속 대 실제' — 컨센서스 대비·최근 서프라이즈 기록·연간 달성률 (10/16)
+            try:
+                stock_code = stock_codes.get(corp_code, "")
+                if stock_code:
+                    track = kr_track.record(state, stock_code, quarter, numbers["revenue_won"], numbers["op_won"])
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("컨센서스 대조 실패(%s): %s", corp_code, exc)
         if units:
             message = build_units_message(watchlist[corp_code], rcept_no, units)
         else:
-            message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers, rcept_dt, quarter, note=note)
+            message = build_message(watchlist[corp_code], report_nm, rcept_no, numbers, rcept_dt, quarter, note=note,
+                                    extra=kr_track.lines(track))
         pending.pop(rcept_no, None)
         chart_path = None
         if numbers and quarter:
